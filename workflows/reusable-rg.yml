@@ -1,0 +1,22 @@
+name: Reusable RG Handler
+
+on:
+  workflow_call:
+    inputs:
+      resource_group_name:
+        required: true
+        type: string
+
+      location:
+        required: true
+        type: string
+
+jobs:
+  show-input:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Show Inputs
+        run: |
+          echo "RG=${{ inputs.resource_group_name }}"
+          echo "LOCATION=${{ inputs.location }}"
