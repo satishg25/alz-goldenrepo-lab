@@ -1,2 +1,2 @@
-resource_group_name = "rg-satish-tf-lab"
+resource_group_name = ""
 location            = "westeurope"
