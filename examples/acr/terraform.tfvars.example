@@ -1,0 +1,11 @@
+subscription_id                  = "00000000-0000-0000-0000-000000000000"
+change_request_id                = "RITM1234567"
+dso                              = "WIPRO"
+resource_group_name              = "rg-acr-dev"
+acr_name                         = "acrdev001"
+location                         = "westeurope"
+sku                              = "Premium"
+diagnostic_workspace_id          = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-monitoring/providers/Microsoft.OperationalInsights/workspaces/law-dev"
+public_network_access_enabled    = false
+private_endpoint_subnet_id       = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-network/providers/Microsoft.Network/virtualNetworks/vnet-dev/subnets/snet-private-endpoints"
+private_dns_zone_id              = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-dns/providers/Microsoft.Network/privateDnsZones/privatelink.azurecr.io"

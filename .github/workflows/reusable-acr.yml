@@ -1,43 +1,64 @@
-name: Reusable ACR Validation
+name: Reusable ACR Terraform Plan
 
 on:
   workflow_call:
     inputs:
-      change_request_id:
-        required: true
-        type: string
-      dso:
-        required: true
-        type: string
-      subscription_id:
-        required: true
-        type: string
-      resource_group_name:
-        required: true
-        type: string
-      acr_name:
-        required: true
-        type: string
-      location:
-        required: true
-        type: string
-      sku:
-        required: true
-        type: string
-      public_network_access:
-        required: true
-        type: string
-      private_endpoint_required:
-        required: true
-        type: string
+      change_request_id: { type: string, required: true }
+      dso: { type: string, required: true }
+      subscription_id: { type: string, required: true }
+      resource_group_name: { type: string, required: true }
+      acr_name: { type: string, required: true }
+      location: { type: string, required: true }
+      sku: { type: string, required: true }
+      public_network_access: { type: string, required: true }
+      private_endpoint_required: { type: string, required: true }
+      issue_number: { type: string, required: true }
+
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
-  show-inputs:
+  validate-inputs:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Validate and Show ACR Inputs
+      - name: Validate workflow inputs
         shell: bash
+        env:
+          CHANGE_REQUEST_ID: ${{ inputs.change_request_id }}
+          DSO: ${{ inputs.dso }}
+          ACR_NAME: ${{ inputs.acr_name }}
+          SKU: ${{ inputs.sku }}
+          PUBLIC_NETWORK_ACCESS: ${{ inputs.public_network_access }}
+          PRIVATE_ENDPOINT_REQUIRED: ${{ inputs.private_endpoint_required }}
+        run: |
+          set -euo pipefail
+          [[ "$CHANGE_REQUEST_ID" =~ ^RITM[0-9]{7,}$ ]] || { echo "Invalid RITM format"; exit 1; }
+          [[ "$ACR_NAME" =~ ^[a-zA-Z0-9]{5,50}$ ]] || { echo "Invalid ACR name"; exit 1; }
+          case "$DSO" in WIPRO|FAAST|CTS|TCS|DXC) ;; *) echo "Invalid DSO"; exit 1 ;; esac
+          case "$SKU" in Premium|Standard|Basic) ;; *) echo "Invalid SKU"; exit 1 ;; esac
+          case "$PUBLIC_NETWORK_ACCESS" in Enabled|Disabled) ;; *) echo "Invalid public access value"; exit 1 ;; esac
+          case "$PRIVATE_ENDPOINT_REQUIRED" in Yes|No) ;; *) echo "Invalid private endpoint value"; exit 1 ;; esac
+          if [[ "$PRIVATE_ENDPOINT_REQUIRED" == "Yes" && "$SKU" != "Premium" ]]; then
+            echo "Private endpoint requires Premium SKU."
+            exit 1
+          fi
+
+  terraform-plan:
+    needs: validate-inputs
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: modules/acr
+    steps:
+      - name: Checkout Golden Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Generate terraform.tfvars.json
+        working-directory: .
         env:
           CHANGE_REQUEST_ID: ${{ inputs.change_request_id }}
           DSO: ${{ inputs.dso }}
@@ -48,41 +69,62 @@ jobs:
           SKU: ${{ inputs.sku }}
           PUBLIC_NETWORK_ACCESS: ${{ inputs.public_network_access }}
           PRIVATE_ENDPOINT_REQUIRED: ${{ inputs.private_endpoint_required }}
+        shell: bash
         run: |
-          set -euo pipefail
+          python - <<'PY'
+          import json, os
+          values = {
+              "change_request_id": os.environ["CHANGE_REQUEST_ID"],
+              "dso": os.environ["DSO"],
+              "subscription_id": os.environ["SUBSCRIPTION_ID"],
+              "resource_group_name": os.environ["RESOURCE_GROUP_NAME"],
+              "acr_name": os.environ["ACR_NAME"],
+              "location": os.environ["LOCATION"],
+              "sku": os.environ["SKU"],
+              "public_network_access_enabled": os.environ["PUBLIC_NETWORK_ACCESS"] == "Enabled",
+              "private_endpoint_enabled": os.environ["PRIVATE_ENDPOINT_REQUIRED"] == "Yes"
+          }
+          with open("terraform.tfvars.json", "w", encoding="utf-8") as f:
+              json.dump(values, f, indent=2)
+          PY
 
-          case "$DSO" in
-            WIPRO|FAAST|CTS|TCS|DXC) ;;
-            *) echo "Invalid DSO: $DSO"; exit 1 ;;
-          esac
+      - name: Terraform format check
+        run: terraform fmt -check -recursive
 
-          case "$SKU" in
-            Premium|Standard|Basic) ;;
-            *) echo "Invalid ACR SKU: $SKU"; exit 1 ;;
-          esac
+      - name: Terraform init
+        run: terraform init -backend=false -input=false
 
-          case "$PUBLIC_NETWORK_ACCESS" in
-            Enabled|Disabled) ;;
-            *) echo "Invalid Public Network Access value: $PUBLIC_NETWORK_ACCESS"; exit 1 ;;
-          esac
+      - name: Terraform validate
+        run: terraform validate -no-color
 
-          case "$PRIVATE_ENDPOINT_REQUIRED" in
-            Yes|No) ;;
-            *) echo "Invalid Private Endpoint Required value: $PRIVATE_ENDPOINT_REQUIRED"; exit 1 ;;
-          esac
+      - name: Terraform plan
+        env:
+          ARM_SUBSCRIPTION_ID: ${{ inputs.subscription_id }}
+        run: terraform plan -input=false -no-color -var-file=../../terraform.tfvars.json -out=tfplan | tee plan.txt
 
-          if [[ "$PRIVATE_ENDPOINT_REQUIRED" == "Yes" && "$SKU" != "Premium" ]]; then
-            echo "Premium SKU is required when Private Endpoint Required is Yes."
-            exit 1
-          fi
+      - name: Add plan summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## ACR Terraform Plan"
+            echo "- Issue: #${{ inputs.issue_number }}"
+            echo "- Change request: ${{ inputs.change_request_id }}"
+            echo "- ACR: ${{ inputs.acr_name }}"
+            echo "- Resource group: ${{ inputs.resource_group_name }}"
+            echo "- Location: ${{ inputs.location }}"
+            echo "- SKU: ${{ inputs.sku }}"
+            echo "- Public network access: ${{ inputs.public_network_access }}"
+            echo "- Private endpoint requested: ${{ inputs.private_endpoint_required }}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-          echo "CHANGE_REQUEST_ID=$CHANGE_REQUEST_ID"
-          echo "DSO=$DSO"
-          echo "SUBSCRIPTION_ID=$SUBSCRIPTION_ID"
-          echo "RESOURCE_GROUP_NAME=$RESOURCE_GROUP_NAME"
-          echo "ACR_NAME=$ACR_NAME"
-          echo "LOCATION=$LOCATION"
-          echo "SKU=$SKU"
-          echo "PUBLIC_NETWORK_ACCESS=$PUBLIC_NETWORK_ACCESS"
-          echo "PRIVATE_ENDPOINT_REQUIRED=$PRIVATE_ENDPOINT_REQUIRED"
-          echo "ACR input transfer and validation completed successfully."
+      - name: Upload Terraform plan artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: acr-plan-${{ inputs.change_request_id }}-${{ github.run_id }}
+          path: |
+            modules/acr/tfplan
+            modules/acr/plan.txt
+            terraform.tfvars.json
+          if-no-files-found: error
+          retention-days: 7
