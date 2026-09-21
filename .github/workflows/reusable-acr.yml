@@ -1,0 +1,88 @@
+name: Reusable ACR Validation
+
+on:
+  workflow_call:
+    inputs:
+      change_request_id:
+        required: true
+        type: string
+      dso:
+        required: true
+        type: string
+      subscription_id:
+        required: true
+        type: string
+      resource_group_name:
+        required: true
+        type: string
+      acr_name:
+        required: true
+        type: string
+      location:
+        required: true
+        type: string
+      sku:
+        required: true
+        type: string
+      public_network_access:
+        required: true
+        type: string
+      private_endpoint_required:
+        required: true
+        type: string
+
+jobs:
+  show-inputs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate and Show ACR Inputs
+        shell: bash
+        env:
+          CHANGE_REQUEST_ID: ${{ inputs.change_request_id }}
+          DSO: ${{ inputs.dso }}
+          SUBSCRIPTION_ID: ${{ inputs.subscription_id }}
+          RESOURCE_GROUP_NAME: ${{ inputs.resource_group_name }}
+          ACR_NAME: ${{ inputs.acr_name }}
+          LOCATION: ${{ inputs.location }}
+          SKU: ${{ inputs.sku }}
+          PUBLIC_NETWORK_ACCESS: ${{ inputs.public_network_access }}
+          PRIVATE_ENDPOINT_REQUIRED: ${{ inputs.private_endpoint_required }}
+        run: |
+          set -euo pipefail
+
+          case "$DSO" in
+            WIPRO|FAAST|CTS|TCS|DXC) ;;
+            *) echo "Invalid DSO: $DSO"; exit 1 ;;
+          esac
+
+          case "$SKU" in
+            Premium|Standard|Basic) ;;
+            *) echo "Invalid ACR SKU: $SKU"; exit 1 ;;
+          esac
+
+          case "$PUBLIC_NETWORK_ACCESS" in
+            Enabled|Disabled) ;;
+            *) echo "Invalid Public Network Access value: $PUBLIC_NETWORK_ACCESS"; exit 1 ;;
+          esac
+
+          case "$PRIVATE_ENDPOINT_REQUIRED" in
+            Yes|No) ;;
+            *) echo "Invalid Private Endpoint Required value: $PRIVATE_ENDPOINT_REQUIRED"; exit 1 ;;
+          esac
+
+          if [[ "$PRIVATE_ENDPOINT_REQUIRED" == "Yes" && "$SKU" != "Premium" ]]; then
+            echo "Premium SKU is required when Private Endpoint Required is Yes."
+            exit 1
+          fi
+
+          echo "CHANGE_REQUEST_ID=$CHANGE_REQUEST_ID"
+          echo "DSO=$DSO"
+          echo "SUBSCRIPTION_ID=$SUBSCRIPTION_ID"
+          echo "RESOURCE_GROUP_NAME=$RESOURCE_GROUP_NAME"
+          echo "ACR_NAME=$ACR_NAME"
+          echo "LOCATION=$LOCATION"
+          echo "SKU=$SKU"
+          echo "PUBLIC_NETWORK_ACCESS=$PUBLIC_NETWORK_ACCESS"
+          echo "PRIVATE_ENDPOINT_REQUIRED=$PRIVATE_ENDPOINT_REQUIRED"
+          echo "ACR input transfer and validation completed successfully."
