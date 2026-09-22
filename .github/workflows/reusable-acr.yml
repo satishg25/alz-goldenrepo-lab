@@ -14,6 +14,9 @@ on:
       private_endpoint_required: { type: string, required: true }
       issue_number: { type: string, required: true }
 
+permissions:
+  contents: read
+
 jobs:
   validate-inputs:
     runs-on: ubuntu-latest
@@ -43,18 +46,24 @@ jobs:
   terraform-plan:
     needs: validate-inputs
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: modules/acr
     steps:
+      # A reusable workflow checks out the CALLER repo by default.
+      # The ACR module lives in the Golden Repo, so check it out explicitly.
       - name: Checkout Golden Repository
         uses: actions/checkout@v4
+        with:
+          repository: satishg25/alz-goldenrepo-lab
+          ref: main
+          # If the Golden Repo is private, uncomment the next line and add the
+          # secret in the Landing Repo. The caller already uses `secrets: inherit`.
+          # token: ${{ secrets.GOLDEN_REPO_TOKEN }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
 
       - name: Generate terraform.tfvars.json
-        working-directory: .
         env:
           CHANGE_REQUEST_ID: ${{ inputs.change_request_id }}
           DSO: ${{ inputs.dso }}
@@ -67,7 +76,8 @@ jobs:
           PRIVATE_ENDPOINT_REQUIRED: ${{ inputs.private_endpoint_required }}
         shell: bash
         run: |
-          python - <<'PY'
+          set -euo pipefail
+          python3 - <<'PY'
           import json, os
           values = {
               "change_request_id": os.environ["CHANGE_REQUEST_ID"],
@@ -78,26 +88,37 @@ jobs:
               "location": os.environ["LOCATION"],
               "sku": os.environ["SKU"],
               "public_network_access_enabled": os.environ["PUBLIC_NETWORK_ACCESS"] == "Enabled",
-              "private_endpoint_enabled": os.environ["PRIVATE_ENDPOINT_REQUIRED"] == "Yes"
+              "private_endpoint_enabled": os.environ["PRIVATE_ENDPOINT_REQUIRED"] == "Yes",
           }
           with open("terraform.tfvars.json", "w", encoding="utf-8") as f:
               json.dump(values, f, indent=2)
           PY
+          echo "Generated terraform.tfvars.json:"
+          cat terraform.tfvars.json
 
       - name: Terraform format check
+        working-directory: modules/acr
         run: terraform fmt -check -recursive
 
       - name: Terraform init
+        working-directory: modules/acr
         run: terraform init -backend=false -input=false
 
       - name: Terraform validate
+        working-directory: modules/acr
         run: terraform validate -no-color
 
       - name: Terraform plan
+        working-directory: modules/acr
         env:
           ARM_SUBSCRIPTION_ID: ${{ inputs.subscription_id }}
-        run: terraform plan -input=false -no-color -var-file=../../terraform.tfvars.json -out=tfplan | tee plan.txt
+        run: |
+          set -o pipefail
+          terraform plan -input=false -no-color \
+            -var-file=../../terraform.tfvars.json \
+            -out=tfplan | tee plan.txt
 
+      # Runs at the repo root, not modules/acr, so it still works if plan fails.
       - name: Add plan summary
         if: always()
         shell: bash
@@ -112,9 +133,11 @@ jobs:
             echo "- SKU: ${{ inputs.sku }}"
             echo "- Public network access: ${{ inputs.public_network_access }}"
             echo "- Private endpoint requested: ${{ inputs.private_endpoint_required }}"
+            echo "- Result: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Terraform plan artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: acr-plan-${{ inputs.change_request_id }}-${{ github.run_id }}
@@ -122,5 +145,5 @@ jobs:
             modules/acr/tfplan
             modules/acr/plan.txt
             terraform.tfvars.json
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
